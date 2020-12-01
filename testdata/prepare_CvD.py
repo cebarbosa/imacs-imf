@@ -9,13 +9,12 @@ from ppxf import ppxf_util
 from spectres import spectres
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, gaussian_filter1d
 
 import context
-from paintbox.utils.broad2res import broad2res
 
 def prepare_VCJ17(data_dir, wave, output, overwrite=False, obsres=100,
-                  wextra=50):
+                  wextra=50, oversample=5):
     """ Prepare templates for SSP models from Villaume et al. (2017).
 
         Parameters
@@ -33,6 +32,8 @@ def prepare_VCJ17(data_dir, wave, output, overwrite=False, obsres=100,
     wextra: float
         Additional wavelength used at both sides of the data to avoid border
         issues in the data processing.
+    oversample: float
+        Oversample factor for rebinning
     """
     if os.path.exists(output) and not overwrite:
         return
@@ -41,11 +42,14 @@ def prepare_VCJ17(data_dir, wave, output, overwrite=False, obsres=100,
     imfs = 0.5 + np.arange(nimf) / 5
     x2s, x1s=  np.stack(np.meshgrid(imfs, imfs)).reshape(2, -1)
     ssps, params = [], []
-    velscale = obsres / 5
+    velscale = obsres / oversample
     for fname in tqdm(filenames, desc="Processing SSP files"):
         T = float(fname.split("_")[3][1:])
         Z = float(fname.split("_")[4][1:-8].replace("p", "+").replace(
                     "m", "-"))
+        for i, (x1, x2) in enumerate(zip(x1s, x2s)):
+            params.append(Table([[Z], [T], [x1], [x2]],
+                                names=["Z", "Age", "x1", "x2"]))
         data = np.loadtxt(os.path.join(data_dir, fname))
         w = data[:,0]
         specs = data[:,1:].T
@@ -59,17 +63,14 @@ def prepare_VCJ17(data_dir, wave, output, overwrite=False, obsres=100,
         if obsres > 100:
             neww = np.exp(ppxf_util.log_rebin([w[0], w[-1]], np.zeros(10),
                                 velscale=velscale)[1])
-            specs = spectres(neww, w, specs, fill=0, verbose=False).T
+            specs = spectres(neww, w, specs, fill=0, verbose=False)
             sigma_diff = np.sqrt(obsres**2 - 100**2) / velscale
             w = neww
-            specs = gaussian_filter(specs, [sigma_diff, 0])
-        specs = spectres(wave, w, specs.T, verbose=False, fill=0.)
+            specs = gaussian_filter(specs, [0, sigma_diff])
         ssps.append(specs)
-        for i, (x1, x2) in enumerate(zip(x1s, x2s)):
-            params.append(Table([[Z], [T], [x1], [x2]],
-                                names=["Z", "Age", "x1", "x2"]))
-    ssps = np.vstack(ssps)
     params = vstack(params)
+    ssps = np.vstack(ssps)
+    ssps = spectres(wave, w, ssps, verbose=False, fill=0.)
     hdu1 = fits.PrimaryHDU(ssps)
     hdu1.header["EXTNAME"] = "SSPS"
     params = Table(params)
@@ -82,7 +83,8 @@ def prepare_VCJ17(data_dir, wave, output, overwrite=False, obsres=100,
     hdulist.writeto(output, overwrite=True)
     return
 
-def prepare_response_functions(data_dir, wave, outprefix, redo=False):
+def prepare_response_functions(data_dir, wave, outprefix, redo=False,
+                               obsres=100, wextra=50, oversample=5):
     """ Prepare response functions from CvD models.
 
     Parameters
@@ -97,11 +99,18 @@ def prepare_response_functions(data_dir, wave, outprefix, redo=False):
         elements, named "{}_{}.fits".format(outprefix, element).
     redo: bool (optional)
         Overwrite output.
-
+    obsres: float
+        Observed resolution (sigma) in km/s
+    wextra: float
+        Additional wavelength used at both sides of the data to avoid border
+        issues in the data processing.
+    oversample: float
+        Oversample factor for rebinning.
     """
-    specs = sorted(os.listdir(data_dir))
+    filenames = sorted([_ for _ in os.listdir(data_dir) if _.startswith(
+            "atlas_ssp")])
     # Read one spectrum to get name of columns
-    with open(os.path.join(data_dir, specs[0])) as f:
+    with open(os.path.join(data_dir, filenames[0])) as f:
         header = f.readline().replace("#", "")
     fields = [_.strip() for _ in header.split(",")]
     fields[fields.index("C+")] = "C+0.15"
@@ -113,25 +122,32 @@ def prepare_response_functions(data_dir, wave, outprefix, redo=False):
     elements = set([_.split("+")[0].split("-")[0] for _ in fields if
                     any(c in _ for c in ["+", "-"])])
     signal = ["+", "-"]
+    velscale = obsres / oversample
     for element in tqdm(elements, desc="Preparing response functions"):
         output = "{}_{}.fits".format(outprefix, element.replace("/", ""))
         if os.path.exists(output) and not redo:
             continue
         params = []
         rfs = []
-        for spec in specs:
-            T = float(spec.split("_")[2][1:])
-            Z = float(spec.split("_")[3].split(".abun")[0][1:].replace(
+        for fname in filenames:
+            T = float(fname.split("_")[2][1:])
+            Z = float(fname.split("_")[3].split(".abun")[0][1:].replace(
                       "p", "+").replace("m", "-"))
-            data = np.loadtxt(os.path.join(data_dir, spec))
+            data = np.loadtxt(os.path.join(data_dir, fname))
             w = data[:,0]
-            fsun = data[:,1]
-            # Adding solar response
+            ####################################################################
+            # Trim arrays according to wavelength
+            idx = np.where((w >= wave.min() - wextra) &
+                           (w <= wave.max() + wextra))[0]
+            w = w[idx]
+            ####################################################################
+            # Solar response
+            fsun = data[:, 1][idx]
             p = Table([[Z], [T], [0.]], names=["Z", "Age", element])
-            rf = np.ones(len(wave))
+            rf = np.ones(len(w))
             rfs.append(rf)
             params.append(p)
-            # Adding non-solar responses
+            # Non-solar responses
             for sign in signal:
                 name = "{}{}".format(element, sign)
                 cols = [(i,f) for i, f in enumerate(fields) if f.startswith(
@@ -140,10 +156,17 @@ def prepare_response_functions(data_dir, wave, outprefix, redo=False):
                     val = float("{}1".format(sign)) * float(col.split(sign)[1])
                     t = Table([[Z], [T], [val]], names=["Z", "Age", element])
                     params.append(t)
-                    rf = data[:, i] / fsun
-                    newrf= spectres(wave, w, rf)
-                    rfs.append(newrf)
+                    rf = data[:, i][idx] / fsun
+                    rfs.append(rf)
         rfs = np.array(rfs)
+        if obsres > 100:
+            neww = np.exp(ppxf_util.log_rebin([w[0], w[-1]], np.zeros(10),
+                                velscale=velscale)[1])
+            rfs = spectres(neww, w, rfs, fill=1, verbose=False)
+            sigma_diff = np.sqrt(obsres**2 - 100**2) / velscale
+            rfs = gaussian_filter(rfs, [0, sigma_diff])
+            w = neww
+        rfs = spectres(wave, w, rfs, verbose=False, fill=1.)
         params = vstack(params)
         hdu1 = fits.PrimaryHDU(rfs)
         hdu1.header["EXTNAME"] = "SSPS"
@@ -183,12 +206,13 @@ def prepare_templates_testdata(zmax=0.05):
         output = os.path.join(outdir, "VCJ17_varydoublex_imacs_{"
                                       "}.fits".format(wrange[i]))
 
-        prepare_VCJ17(ssps_dir, outwave, output, obsres=target_res[i])
-        input(404)
+        prepare_VCJ17(ssps_dir, outwave, output, obsres=target_res[i],
+                      overwrite=False)
         # Preparing response functions
         rfs_dir = os.path.join(models_dir, "RFN_v3")
         outprefix = os.path.join(outdir, "C18_imacs_{}_rfs".format(wrange[i]))
-        prepare_response_functions(rfs_dir, wave, outprefix)
+        prepare_response_functions(rfs_dir, outwave, outprefix,
+                                   obsres=target_res[i], redo=True)
 
 if __name__ == "__main__":
     prepare_templates_testdata()
