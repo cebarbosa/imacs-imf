@@ -4,12 +4,10 @@ import os
 import numpy as np
 from astropy.table import Table, vstack
 from astropy.io import fits
-import astropy.constants as const
 from ppxf import ppxf_util
 from spectres import spectres
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter, gaussian_filter1d
+from scipy.ndimage import gaussian_filter
 
 import context
 
@@ -180,17 +178,15 @@ def prepare_response_functions(data_dir, wave, outprefix, redo=False,
         hdulist.writeto(output, overwrite=True)
 
 def prepare_templates_testdata(zmax=0.05):
-    outdir = os.path.join(context.home_dir, "templates")
-    if not os.path.exists(outdir):
-        os.mkdir(outdir)
+    wdir = os.path.join(context.home_dir, "templates")
+    if not os.path.exists(wdir):
+        os.mkdir(wdir)
     # Read testdata processed file to obtain wavelength ranges.
     filename = os.path.join(context.home_dir, "data/testdata/NGC7144_spec.fits")
     # Directory where models are stored
     models_dir = "/home/kadu/Dropbox/SPINS/CvD18/"
     ssps_dir = os.path.join(models_dir, "VCJ_v8")
     # Loading the wavelength dispersion from one of the models
-    wave = np.loadtxt(os.path.join(ssps_dir, os.listdir(ssps_dir)[0]),
-                      usecols=(0,))
     target_res = np.array([200, 100]) # Rounding up the ideal resolution
     velscale = np.ceil(target_res / 2.5) # Same as input spectrum
     wrange = ["blue", "red"]
@@ -203,14 +199,16 @@ def prepare_templates_testdata(zmax=0.05):
         outwave = np.exp(ppxf_util.log_rebin([w1, w2], np.zeros(10),
                                       velscale=velscale[i])[1])
         # Defining where the models should be stored
-        output = os.path.join(outdir, "VCJ17_varydoublex_imacs_{"
-                                      "}.fits".format(wrange[i]))
-
+        outdir = os.path.join(wdir, "imacs-{}".format(wrange[i]))
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
+        output = os.path.join(outdir,
+                "VCJ17_varydoublex.fits".format(wrange[i]))
         prepare_VCJ17(ssps_dir, outwave, output, obsres=target_res[i],
                       overwrite=False)
         # Preparing response functions
         rfs_dir = os.path.join(models_dir, "RFN_v3")
-        outprefix = os.path.join(outdir, "C18_imacs_{}_rfs".format(wrange[i]))
+        outprefix = os.path.join(outdir, "C18_rfs")
         prepare_response_functions(rfs_dir, outwave, outprefix,
                                    obsres=target_res[i], redo=True)
 
