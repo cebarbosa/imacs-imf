@@ -177,7 +177,7 @@ def prepare_response_functions(data_dir, wave, outprefix, redo=False,
         hdulist = fits.HDUList([hdu1, hdu2, hdu3])
         hdulist.writeto(output, overwrite=True)
 
-def prepare_templates_testdata(zmax=0.05):
+def prepare_templates_testdata(zmax=0.05, redo=False):
     wdir = os.path.join(context.home_dir, "templates")
     if not os.path.exists(wdir):
         os.mkdir(wdir)
@@ -188,7 +188,9 @@ def prepare_templates_testdata(zmax=0.05):
     ssps_dir = os.path.join(models_dir, "VCJ_v8")
     # Loading the wavelength dispersion from one of the models
     target_res = np.array([200, 100]) # Rounding up the ideal resolution
-    velscale = np.ceil(target_res / 2.5) # Same as input spectrum
+    # velscale = np.ceil(target_res / 2.5) # Same as input spectrum
+    velscale = 100
+
     wrange = ["blue", "red"]
     for i, ext in enumerate([1,2]):
         table = Table.read(filename, hdu=ext)
@@ -197,7 +199,7 @@ def prepare_templates_testdata(zmax=0.05):
         w2 = (w2data / 100).astype(int) * 100 + 100
         # Using ppxf to obtain a logarithmic-scaled dispersion
         outwave = np.exp(ppxf_util.log_rebin([w1, w2], np.zeros(10),
-                                      velscale=velscale[i])[1])
+                                      velscale=velscale)[1])
         # Defining where the models should be stored
         outdir = os.path.join(wdir, "imacs-{}".format(wrange[i]))
         if not os.path.exists(outdir):
@@ -205,12 +207,12 @@ def prepare_templates_testdata(zmax=0.05):
         output = os.path.join(outdir,
                 "VCJ17_varydoublex.fits".format(wrange[i]))
         prepare_VCJ17(ssps_dir, outwave, output, obsres=target_res[i],
-                      overwrite=False)
+                      overwrite=redo)
         # Preparing response functions
         rfs_dir = os.path.join(models_dir, "RFN_v3")
         outprefix = os.path.join(outdir, "C18_rfs")
         prepare_response_functions(rfs_dir, outwave, outprefix,
-                                   obsres=target_res[i], redo=True)
+                                   obsres=target_res[i], redo=redo)
 
 if __name__ == "__main__":
-    prepare_templates_testdata()
+    prepare_templates_testdata(redo=True)

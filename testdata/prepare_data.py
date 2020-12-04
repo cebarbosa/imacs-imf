@@ -40,7 +40,7 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
     fwhms = [fwhm[idx] for idx in idxs]
     # Homogeneize the resolution
     target_res = np.array([200, 100]) # Rounding up the ideal resolution
-    velscale = np.ceil(target_res / 2.5)
+    velscale = 100
     names = ["wave", "flux", "fluxerr", "mask"]
     hdulist = [fits.PrimaryHDU()]
     for i in range(2):
@@ -49,7 +49,7 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
                                   fluxerr=fluxerrs[i])
         # Using ppxf to obtain a logarithmic-scaled dispersion
         logwave = ppxf_util.log_rebin([waves[i][0], waves[i][-1]], np.zeros(10),
-                                      velscale=velscale[i])[1]
+                                      velscale=velscale)[1]
         newwave = np.exp(logwave)
         # Resampling data
         newflux, newfluxerr = spectres(newwave, waves[i], flux,

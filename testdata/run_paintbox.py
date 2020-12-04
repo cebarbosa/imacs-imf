@@ -1,10 +1,11 @@
 """ Run paintbox in observed data. """
 import os
+import shutil
 
 import numpy as np
 from scipy import stats
 from astropy.io import fits
-from astropy.table import Table
+from astropy.table import Table, vstack
 import matplotlib.pyplot as plt
 import emcee
 import paintbox as pb
@@ -101,9 +102,6 @@ def run_sampler(loglike, priors, outdb, nsteps=3000):
         lp = np.sum([prior(val) for prior, val in zip(logpdf, theta)])
         if not np.isfinite(lp) or np.isnan(lp):
             return -np.inf
-        ll = loglike(theta)
-        if np.isnan(ll):
-            return -np.inf
         return lp + loglike(theta)
     backend = emcee.backends.HDFBackend(outdb)
     backend.reset(nwalkers, ndim)
@@ -111,6 +109,36 @@ def run_sampler(loglike, priors, outdb, nsteps=3000):
                                     backend=backend)
     sampler.run_mcmc(pos, nsteps, progress=True)
     return
+
+def make_table(trace, outtab):
+    data = np.array([trace[p].data for p in trace.colnames]).T
+    v = np.percentile(data, 50, axis=0)
+    vmax = np.percentile(data, 84, axis=0)
+    vmin = np.percentile(data, 16, axis=0)
+    vuerr = vmax - v
+    vlerr = v - vmin
+    tab = []
+    for i, param in enumerate(trace.colnames):
+        t = Table()
+        t["param"] = [param]
+        t["median"] = [round(v[i], 5)]
+        t["lerr".format(param)] = [round(vlerr[i], 5)]
+        t["uerr".format(param)] = [round(vuerr[i], 5)]
+        tab.append(t)
+    tab = vstack(tab)
+    tab.write(outtab, overwrite=True)
+    return tab
+
+def plot_fitting(waves, fluxes, fluxerrs, masks, seds, colnames, trace):
+    for i in range(len(waves)):
+        idx = [colnames.index(p) for p in seds[i].parnames]
+        t = trace[:, idx]
+        p = t.mean(axis=0)
+        plt.errorbar(waves[i][masks[i]], fluxes[i][masks[i]],
+                     yerr=fluxerrs[i][masks[i]], fmt="-",
+                     ecolor="0.8", c="tab:blue")
+        plt.plot(waves[i][masks[i]], seds[i](p)[masks[i]], c="tab:orange")
+    plt.show()
 
 def run_testdata():
     V0 = 1930
@@ -120,6 +148,7 @@ def run_testdata():
     wdir = os.path.join(context.home_dir, "data/testdata/")
     spec = os.path.join(wdir, "NGC7144_spec.fits")
     logps, priors, seds = [], [], []
+    waves, fluxes, fluxerrs, masks = [], [], [], []
     for i, side in enumerate(["blue", "red"]):
         tab = Table.read(spec, hdu=i+1)
         #  Normalizing the data to make priors simple
@@ -152,11 +181,32 @@ def run_testdata():
         logps.append(logp)
         seds.append(sed)
         priors.append(prior)
+        waves.append(wave)
+        fluxes.append(flux)
+        fluxerrs.append(fluxerr)
+        masks.append(mask)
     # Joining the two loglikelihoods
-    logp = JointLogLike(logps[0], logps[1])
+    logp = JointLogLike(logps[0], logps[1]) 
     priors = {**priors[0], **priors[1]} # Joining the priors
+    # Running fit
+    # Run in any directory outside Dropbox to avoid conflicts
+    tmp_db = os.path.join(os.getcwd(), os.path.split(spec)[1].replace(".fits",
+                                                                 ".h5"))
+    if os.path.exists(tmp_db):
+        os.remove(tmp_db)
     outdb = spec.replace(".fits", ".h5")
-    run_sampler(logp, priors, outdb)
+    nsteps = 3000
+    if not os.path.exists(outdb):
+        run_sampler(logp, priors, tmp_db, nsteps=nsteps)
+        shutil.move(tmp_db, outdb)
+    # Load database and make a table with summary statistics
+    reader = emcee.backends.HDFBackend(outdb)
+    tracedata = reader.get_chain(discard=int(.9 * nsteps), flat=True, thin=40)
+    trace = Table(tracedata, names=logp.parnames)
+    outtab = os.path.join(outdb.replace(".h5", "_results.fits"))
+    make_table(trace, outtab)
+    # Plot fit
+    plot_fitting(waves, fluxes, fluxerrs, masks, seds, logp.parnames, tracedata)
 
 
 if __name__ == "__main__":
