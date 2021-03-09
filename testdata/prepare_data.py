@@ -30,7 +30,8 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
     c = const.c.to("km/s").value
     fwhm = res_kms / c * wave * 2.335
     # Splitting the data to work with different resolutions
-    wave_ranges = [[wave[0], 7200], [8000, wave[-1]]]
+
+    wave_ranges = [[4200, 6680], [8200, 8900]]
     idxs = [np.where((wave >= w1) & (wave < w2))[0] for w1,w2 in wave_ranges]
     waves = [wave[idx] for idx in idxs]
     fluxes = [flux[idx] for idx in idxs]
@@ -43,12 +44,12 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
     velscale = 100
     names = ["wave", "flux", "fluxerr", "mask"]
     hdulist = [fits.PrimaryHDU()]
-    for i in range(2):
+    for i in range(len(wave_ranges)):
         target_fwhm = target_res[i] / c * waves[i] * 2.335
         flux, fluxerr = broad2res(waves[i], fluxes[i], fwhms[i], target_fwhm,
                                   fluxerr=fluxerrs[i])
         # Using ppxf to obtain a logarithmic-scaled dispersion
-        logwave = ppxf_util.log_rebin([waves[i][0], waves[i][-1]], np.zeros(10),
+        logwave = ppxf_util.log_rebin([waves[i][0], waves[i][-1]], flux,
                                       velscale=velscale)[1]
         newwave = np.exp(logwave)
         # Resampling data
