@@ -176,39 +176,58 @@ def make_table(trace, outtab):
     tab.write(outtab, overwrite=True)
     return tab
 
-def plot_fitting(waves, fluxes, fluxerrs, masks, seds, colnames, trace):
-    fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]},
+def plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, output,
+                 skylines=None, dsky=3):
+    width_ratios = [w[-1]-w[0] for w in waves]
+    fig, axs = plt.subplots(2, len(seds), gridspec_kw={'height_ratios': [2, 1],
+                            "width_ratios": width_ratios},
                             figsize=(2 * context.fig_width, 3))
     for i in range(len(waves)):
-        idx = [colnames.index(p) for p in seds[i].parnames]
-        t = trace[:, idx]
-        p = t.mean(axis=0)
+        sed = seds[i]
+        t = np.array([trace[p].data for p in sed.parnames]).T
+        n = len(t)
         wave = waves[i][masks[i]]
         flux = fluxes[i][masks[i]]
         fluxerr = fluxerrs[i][masks[i]]
-        models = np.zeros((len(t), len(wave)))
+        models = np.zeros((n, len(wave)))
         y = np.percentile(models, 50, axis=(0,))
-        for j in tqdm(range(len(t)), desc="Generating models for trace"):
+        for j in tqdm(range(len(trace)), desc="Generating models "
+                                                         "for trace"):
             models[j] = seds[i](t[j])[masks[i]]
         y = np.percentile(models, 50, axis=(0,))
         yuerr = np.percentile(models, 84, axis=(0,)) - y
         ylerr = y - np.percentile(models, 16, axis=(0,))
-        ax0 = plt.subplot(axs[0])
+        ax0 = plt.subplot(axs[0,i])
         ax0.errorbar(wave, flux, yerr=fluxerr, fmt="-",
                      ecolor="0.8", c="tab:blue")
         ax0.plot(wave, y, c="tab:orange")
         ax0.xaxis.set_ticklabels([])
         ax0.set_ylabel("Flux")
-        ax1 = plt.subplot(axs[1])
+
+        ax1 = plt.subplot(axs[1,i])
         ax1.errorbar(wave, 100 * (flux - y) / flux, yerr=100 * fluxerr, \
                                                                 fmt="-",
                      ecolor="0.8", c="tab:blue")
         ax1.plot(wave, 100 * (flux - y) / flux, c="tab:orange")
         ax1.set_ylabel("Res. (\%)")
         ax1.set_xlabel("$\lambda$ (Angstrom)")
-    ax1.axhline(y=0, ls="--", c="k")
+        ax1.set_ylim(-5, 5)
+        ax1.axhline(y=0, ls="--", c="k")
+        # Include sky lines shades
+        if skylines is not None:
+            for ax in [ax0, ax1]:
+                w0, w1 = ax0.get_xlim()
+                for skyline in skylines:
+                    if (skyline < w0) or (skyline > w1):
+                        continue
+                    ax.axvspan(skyline - 3, skyline + 3, color="0.9",
+                               zorder=-100)
     plt.tight_layout()
+    plt.savefig(output, dpi=300)
     plt.show()
+    plt.clf()
+    plt.close(fig)
+    return
 
 def weighted_traces(trace):
     """ Combine SSP traces to have mass/luminosity weighted properties"""
@@ -216,18 +235,13 @@ def weighted_traces(trace):
     parnames = ["_".join(_.split("_")[:-1]) for _ in trace.colnames if
                          _.endswith("_1") and _ != "w_1"]
     weights = np.array([trace["w_{}".format(i+1)].data for i in range(nssps)])
-    wtrace = {}
+    wtrace = []
     for param in parnames:
         data = np.array([trace["{}_{}".format(param, i+1)].data
                          for i in range(nssps)])
-        wtrace[param] = np.average(data, weights=weights, axis=0)
-        plt.hist(data[0], alpha=0.5, density=True)
-        plt.hist(data[1], alpha=0.5, density=True)
-        plt.hist(wtrace[param], label=param, alpha=0.5, density=True)
-        plt.legend()
-        plt.show()
-    dataset = az.convert_to_inference_data(wtrace)
-    return dataset
+        t = np.average(data, weights=weights, axis=0)
+        wtrace.append(Table([t], names=["{}_weighted".format(param)]))
+    return hstack(wtrace)
 
 def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1):
     """ Run paintbox. """
@@ -276,7 +290,7 @@ def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1):
                                       porder=porder,
                                       polynames="p{}".format(side),
                                       vname="vsyst_{}".format(side),
-                                   nssps=nssps)
+                                      nssps=nssps)
         # Defining the likelihood for each part and
         if loglike == "normal":
             logp = pb.NormalLogLike(flux, sed, obserr=fluxerr, mask=mask)
@@ -311,16 +325,17 @@ def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1):
         shutil.move(tmp_db, outdb)
     # Load database and make a table with summary statistics
     reader = emcee.backends.HDFBackend(outdb)
-    tracedata = reader.get_chain(discard=int(.9 * nsteps), flat=True, thin=40)
+    tracedata = reader.get_chain(discard=int(nsteps - 300), flat=True, thin=40)
     trace = Table(tracedata, names=logp.parnames)
     if nssps > 1:
-        nssps = weighted_traces(trace)
-        az.plot_pair(nssps)
-        plt.show()
+        wtrace = weighted_traces(trace)
+        trace = hstack([trace, wtrace])
     outtab = os.path.join(outdb.replace(".h5", "_results.fits"))
     make_table(trace, outtab)
     # Plot fit
-    plot_fitting(waves, fluxes, fluxerrs, masks, seds, logp.parnames, tracedata)
+    outimg = outdb.replace(".h5", "_fit.png")
+    plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, outimg,
+                 skylines=skylines)
 
 
 if __name__ == "__main__":
