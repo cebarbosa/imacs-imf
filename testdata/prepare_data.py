@@ -45,7 +45,7 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
     names = ["wave", "flux", "fluxerr", "mask"]
     hdulist = [fits.PrimaryHDU()]
     for i in range(len(wave_ranges)):
-        target_fwhm = target_res[i] / c * waves[i] * 2.335
+        target_fwhm = target_res[i] / c * waves[i] * 2.355
         flux, fluxerr = broad2res(waves[i], fluxes[i], fwhms[i], target_fwhm,
                                   fluxerr=fluxerrs[i])
         # Using ppxf to obtain a logarithmic-scaled dispersion
