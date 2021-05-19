@@ -57,7 +57,7 @@ def make_paintbox_model(wave, outname, name="test", porder=45, nssps=1,
     sed = stars * poly
     return sed, limits
 
-def set_priors(parnames, limits, vsyst):
+def set_priors(parnames, limits, vsyst, nssps=1):
     """ Defining prior distributions for the model. """
     priors = {}
     for parname in parnames:
@@ -77,7 +77,7 @@ def set_priors(parnames, limits, vsyst):
         elif name in ["pred", "pblue"]:
             porder = int(parname.split("_")[1])
             if porder == 0:
-                mu, sd = 1, 1
+                mu, sd = 1 / nssps, 1
                 a, b = (0 - mu) / sd, (np.infty - mu) / sd
                 priors[parname] = stats.truncnorm(a, b, mu, sd)
             else:
@@ -137,8 +137,7 @@ def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1,
     # Providing template file
     pb_dir = os.path.join(wdir, "paintbox-nssps{}-{}".format(nssps, loglike))
     spec = os.path.join(wdir, "NGC7144_spec.fits")
-    logps, priors, seds = [], [], []
-    waves, fluxes, fluxerrs, masks = [], [], [], []
+    logps = []
     wranges = [[4000, 6680], [7800, 8900]]
     for i, side in enumerate(["blue", "red"]):
         tab = Table.read(spec, hdu=i+1)
@@ -168,28 +167,14 @@ def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1,
         outname = f"CvD18_sig{target_res[i]}_{side}"
         sed, limits = make_paintbox_model(wave, outname, nssps=nssps, name=side,
                                   sigma=target_res[i], porder=porder)
-        # priors = make_priors(sed.parnames, limits)
-        # Defining the likelihood for each part and
-        if loglike == "normal":
-            logp = pb.NormalLogLike(flux, sed, obserr=fluxerr, mask=mask)
-        elif loglike == "studt2":
-            logp = pb.StudT2LogLike(flux, sed, obserr=fluxerr, mask=mask)
         logps.append(logp)
-        seds.append(sed)
-        # logps.append(logp)
-        # seds.append(sed)
-        # priors.append(priors)
-        # waves.append(wave)
-        # fluxes.append(flux)
-        # fluxerrs.append(fluxerr)
-        # masks.append(mask)
     # Make a joint likelihood for all sections
     logp = logps[0]
     for i in range(nssps - 1):
         logp += logps[i+1]
     # Making priors
     v0 = {"vsyst_blue": 1390, "vsyst_red": 1860}
-    priors = set_priors(logp.parnames, limits, vsyst=v0)
+    priors = set_priors(logp.parnames, limits, vsyst=v0, nssps=nssps)
     # Perform fitting
     dbname = "NGC7144_nssps{}_{}_nsteps{}.h5".format(nssps, loglike, nsteps)
     # Run in any directory outside Dropbox to avoid conflicts
