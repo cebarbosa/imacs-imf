@@ -1,10 +1,19 @@
-import os
-import getpass
+import platform
 
 import matplotlib.pyplot as plt
 
-if getpass.getuser() == "kadu":
+node = platform.node()
+# Settings for personal computer
+if node in ["kadu-Inspiron-5557"]:
     home_dir = "/home/kadu/Dropbox/imacs-imf"
+    cvd_dir = "/home/kadu/Dropbox/SSPs/CvD18"
+    mp_pool_size = 4 # Number of cores for parallel processing
+# Settings for supercomputers @IAG/USP
+elif node in ["uv100", "alphacrucis", "yaci.iag.usp.br"]:
+    home_dir = "/sto/home/cebarbosa/imacs-imf"
+    mp_pool_size = 64
+else:
+    raise ValueError("Please define your directories inside context.py")
 
 # Matplotlib settings
 plt.style.context("seaborn-paper")
