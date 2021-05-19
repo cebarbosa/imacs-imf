@@ -11,6 +11,7 @@ if node in ["kadu-Inspiron-5557"]:
 # Settings for supercomputers @IAG/USP
 elif node in ["uv100", "alphacrucis", "yaci.iag.usp.br"]:
     home_dir = "/sto/home/cebarbosa/imacs-imf"
+    cvd_dir = "/sto/home/cebarbosa/SSPs/CvD18"
     mp_pool_size = 64
 else:
     raise ValueError("Please define your directories inside context.py")
