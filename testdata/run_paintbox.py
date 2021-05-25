@@ -63,6 +63,8 @@ def set_priors(parnames, limits, vsyst, nssps=1):
             priors["nu"] = stats.uniform(loc=2, scale=20)
         elif parname == "sigma":
             priors["sigma"] = stats.uniform(loc=50, scale=300)
+        elif name == "w":
+            priors[parname] = stats.uniform(loc=0, scale=1)
         elif name in ["pred", "pblue"]:
             porder = int(parname.split("_")[1])
             if porder == 0:
