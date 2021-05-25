@@ -3,13 +3,14 @@ import platform
 import matplotlib.pyplot as plt
 
 node = platform.node()
+lai_machines = ["uv100", "alphacrucis", "yaci.iag.usp.br"] # nodes @LAI cluster
 # Settings for personal computer
 if node in ["kadu-Inspiron-5557"]:
     home_dir = "/home/kadu/Dropbox/imacs-imf"
     cvd_dir = "/home/kadu/Dropbox/SSPs/CvD18"
     mp_pool_size = 4 # Number of cores for parallel processing
 # Settings for supercomputers @IAG/USP
-elif node in ["uv100", "alphacrucis", "yaci.iag.usp.br"]:
+elif node in lai_machines:
     home_dir = "/sto/home/cebarbosa/imacs-imf"
     cvd_dir = "/sto/home/cebarbosa/SSPs/CvD18"
     mp_pool_size = 64

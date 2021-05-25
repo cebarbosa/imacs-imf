@@ -2,13 +2,11 @@
 import os
 import shutil
 import copy
-import glob
-import platform
 
 import numpy as np
 from scipy import stats
 import multiprocessing as mp
-from astropy.table import Table
+from astropy.table import Table, hstack, vstack
 import emcee
 import paintbox as pb
 from paintbox.utils import CvD18, disp2vel
@@ -31,8 +29,8 @@ def make_paintbox_model(wave, name="test", porder=45, nssps=1,
     limits = ssp.limits
     if nssps > 1:
         for i in range(nssps):
-            p0 = pb.Polynomial(twave, 0)
-            p0.parnames = [f"p{name}_{0}_{i+1}"]
+            p0 = pb.Polynomial(twave, 0, pname="w")
+            p0.parnames = [f"w_{i+1}"]
             s = copy.deepcopy(ssp)
             s.parnames = ["{}_{}".format(_, i+1) for _ in s.parnames]
             if i == 0:
@@ -44,8 +42,7 @@ def make_paintbox_model(wave, name="test", porder=45, nssps=1,
     vname = "vsyst_{}".format(name)
     stars = pb.Resample(wave, pb.LOSVDConv(pop, losvdpars=[vname, "sigma"]))
     # Adding a polynomial
-    zeroth = True if nssps==1 else False
-    poly = pb.Polynomial(wave, porder, zeroth=zeroth, pname=f"p{name}")
+    poly = pb.Polynomial(wave, porder, zeroth=True, pname=f"p{name}")
     sed = stars * poly
     return sed, limits
 
@@ -113,8 +110,47 @@ def run_sampler(outdb, nsteps=5000):
         sampler.run_mcmc(pos, nsteps, progress=True)
     return
 
-def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1,
-                 elements=None, target_res=None):
+def weighted_traces(trace, nssps):
+    """ Combine SSP traces to have mass/luminosity weighted properties"""
+    print(trace.colnames)
+    parnames = ["_".join(_.split("_")[:-1]) for _ in trace.colnames if
+                         _.endswith("_1") and _ != "w_1"]
+    weights = np.array([trace["pblue_0_{}".format(i+1)].data for i in range(
+        nssps)])
+    w2 = np.array([trace["pred_0_{}".format(i+1)].data for i in range(
+        nssps)])
+    print(weights)
+    print(w2)
+    input()
+    wtrace = []
+    for param in parnames:
+        data = np.array([trace["{}_{}".format(param, i+1)].data
+                         for i in range(nssps)])
+        t = np.average(data, weights=weights, axis=0)
+        wtrace.append(Table([t], names=["{}_weighted".format(param)]))
+    return hstack(wtrace)
+
+def make_table(trace, outtab):
+    data = np.array([trace[p].data for p in trace.colnames]).T
+    v = np.percentile(data, 50, axis=0)
+    vmax = np.percentile(data, 84, axis=0)
+    vmin = np.percentile(data, 16, axis=0)
+    vuerr = vmax - v
+    vlerr = v - vmin
+    tab = []
+    for i, param in enumerate(trace.colnames):
+        t = Table()
+        t["param"] = [param]
+        t["median"] = [round(v[i], 5)]
+        t["lerr".format(param)] = [round(vlerr[i], 5)]
+        t["uerr".format(param)] = [round(vuerr[i], 5)]
+        tab.append(t)
+    tab = vstack(tab)
+    tab.write(outtab, overwrite=True)
+    return tab
+
+def run_testdata(galaxy, dlam=100, nsteps=5000, loglike="studt2", nssps=1,
+                 target_res=None):
     """ Run paintbox. """
     global logp, priors
     target_res = [200, 100] if target_res is None else target_res
@@ -125,10 +161,9 @@ def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1,
                          8747, 8757, 8767, 8777, 8787, 8797, 8827, 8836,
                          8919, 9310])
     dsky = 3 # Space around sky lines
-    wdir = os.path.join(context.home_dir, "data/testdata/")
+    wdir = os.path.join(context.home_dir, f"data/{galaxy}")
     # Providing template file
-    pb_dir = os.path.join(wdir, "paintbox-nssps{}-{}".format(nssps, loglike))
-    spec = os.path.join(wdir, "NGC7144_spec.fits")
+    spec = os.path.join(wdir, f"{galaxy}_spec.fits")
     logps = []
     wranges = [[4000, 6680], [7800, 8900]]
     for i, side in enumerate(["blue", "red"]):
@@ -168,17 +203,33 @@ def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1,
     v0 = {"vsyst_blue": 1390, "vsyst_red": 1860}
     priors = set_priors(logp.parnames, limits, vsyst=v0, nssps=nssps)
     # Perform fitting
-    dbname = "NGC7144_nssps{}_{}_nsteps{}.h5".format(nssps, loglike, nsteps)
-    # Run in any directory outside Dropbox to avoid conflicts
+    dbname = f"{galaxy}_nssps{nssps}_{loglike}_nsteps{nsteps}.h5"
+    # Run in any directory outside Dropbox to avoid problems
     tmp_db = os.path.join(os.getcwd(), dbname)
     if os.path.exists(tmp_db):
         os.remove(tmp_db)
-    outdb = os.path.join(pb_dir, dbname)
+    outdb = os.path.join(wdir, dbname)
     if not os.path.exists(outdb):
         run_sampler(tmp_db, nsteps=nsteps)
-        if not os.path.exists(pb_dir):
-            os.mkdir(pb_dir)
         shutil.move(tmp_db, outdb)
+    # Post processing of data
+    if context.node in context.lai_machines: #not allowing post-processing @LAI
+        return
+    reader = emcee.backends.HDFBackend(outdb)
+    tracedata = reader.get_chain(discard=int(nsteps * 0.9), flat=True, thin=50)
+    trace = Table(tracedata, names=logp.parnames)
+    if nssps > 1:
+        wtrace = weighted_traces(trace, nssps)
+        trace = hstack([trace, wtrace])
+    outtab = os.path.join(outdb.replace(".h5", "_results.fits"))
+    make_table(trace, outtab)
+    # # Plot fit
+    # outimg = outdb.replace(".h5", "_fit.png")
+    # plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, outimg,
+    #              skylines=skylines)
+
 
 if __name__ == "__main__":
-    run_testdata(nssps=2)
+    galaxies = ["NGC7144"]
+    for galaxy in galaxies:
+        run_testdata(galaxy, nssps=2)
