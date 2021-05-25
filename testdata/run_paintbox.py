@@ -15,27 +15,19 @@ from paintbox.utils import CvD18, disp2vel
 
 import context
 
-def make_paintbox_model(wave, outname, name="test", porder=45, nssps=1,
+def make_paintbox_model(wave, name="test", porder=45, nssps=1,
                         sigma=100):
     # Directory where you store your CvD models
     base_dir = context.cvd_dir
     # Locationg where pre-processed models will be stored for paintbox
-    outdir = os.path.join(context.home_dir, f"templates")
-    # Indicating the filenames of the SSP models
-    ssps_dir = os.path.join(base_dir, "VCJ_v8")
-    ssp_files = glob.glob(os.path.join(ssps_dir, "VCJ*.s100"))
-    # Indicating the filenames for the response functions
-    rfs_dir = os.path.join(base_dir, "RFN_v3")
-    rf_files = glob.glob(os.path.join(rfs_dir, "atlas_ssp*.s100"))
-    if not os.path.exists(outdir):
-        os.mkdir(outdir)
+    outdir = os.path.join(context.home_dir,
+                          f"templates/CvD18_sig{sigma}_{name}")
     # Defining wavelength for templates
     velscale = sigma / 2
     wmin = wave.min() - 200
     wmax = wave.max() + 50
     twave = disp2vel([wmin, wmax], velscale)
-    ssp = CvD18(twave, ssp_files=ssp_files, rf_files=rf_files, sigma=sigma,
-                outdir=outdir, outname=outname)
+    ssp = CvD18(twave, sigma=sigma, store=outdir)
     limits = ssp.limits
     if nssps > 1:
         for i in range(nssps):
@@ -164,9 +156,9 @@ def run_testdata(dlam=100, nsteps=5000, loglike="studt2", nssps=1,
         wmax = wave[mask].max()
         porder = int((wmax - wmin) / dlam)
         # Building paintbox model
-        outname = f"CvD18_sig{target_res[i]}_{side}"
-        sed, limits = make_paintbox_model(wave, outname, nssps=nssps, name=side,
+        sed, limits = make_paintbox_model(wave, nssps=nssps, name=side,
                                   sigma=target_res[i], porder=porder)
+        logp = pb.Normal2LogLike(flux, sed, obserr=fluxerr, mask=mask)
         logps.append(logp)
     # Make a joint likelihood for all sections
     logp = logps[0]
