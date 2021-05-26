@@ -8,6 +8,8 @@ from scipy import stats
 import multiprocessing as mp
 from astropy.table import Table, hstack, vstack
 import emcee
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 import paintbox as pb
 from paintbox.utils import CvD18, disp2vel
 
@@ -112,18 +114,10 @@ def run_sampler(outdb, nsteps=5000):
         sampler.run_mcmc(pos, nsteps, progress=True)
     return
 
-def weighted_traces(trace, nssps):
+def weighted_traces(parnames, trace, nssps):
     """ Combine SSP traces to have mass/luminosity weighted properties"""
-    print(trace.colnames)
-    parnames = ["_".join(_.split("_")[:-1]) for _ in trace.colnames if
-                         _.endswith("_1") and _ != "w_1"]
-    weights = np.array([trace["pblue_0_{}".format(i+1)].data for i in range(
+    weights = np.array([trace["w_{}".format(i+1)].data for i in range(
         nssps)])
-    w2 = np.array([trace["pred_0_{}".format(i+1)].data for i in range(
-        nssps)])
-    print(weights)
-    print(w2)
-    input()
     wtrace = []
     for param in parnames:
         data = np.array([trace["{}_{}".format(param, i+1)].data
@@ -151,7 +145,60 @@ def make_table(trace, outtab):
     tab.write(outtab, overwrite=True)
     return tab
 
-def run_testdata(galaxy, dlam=100, nsteps=5000, loglike="studt2", nssps=1,
+def plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, output,
+                 skylines=None, dsky=3):
+    width_ratios = [w[-1]-w[0] for w in waves]
+    fig, axs = plt.subplots(2, len(seds), gridspec_kw={'height_ratios': [2, 1],
+                            "width_ratios": width_ratios},
+                            figsize=(2 * context.fig_width, 3))
+    for i in range(len(waves)):
+        sed = seds[i]
+        t = np.array([trace[p].data for p in sed.parnames]).T
+        n = len(t)
+        wave = waves[i][masks[i]]
+        flux = fluxes[i][masks[i]]
+        fluxerr = fluxerrs[i][masks[i]]
+        models = np.zeros((n, len(wave)))
+        y = np.percentile(models, 50, axis=(0,))
+        for j in tqdm(range(len(trace)), desc="Generating models "
+                                                         "for trace"):
+            models[j] = seds[i](t[j])[masks[i]]
+        y = np.percentile(models, 50, axis=(0,))
+        yuerr = np.percentile(models, 84, axis=(0,)) - y
+        ylerr = y - np.percentile(models, 16, axis=(0,))
+        ax0 = fig.add_subplot(axs[0,i])
+        ax0.errorbar(wave, flux, yerr=fluxerr, fmt="-",
+                     ecolor="0.8", c="tab:blue")
+        ax0.plot(wave, y, c="tab:orange")
+        ax0.xaxis.set_ticklabels([])
+        ax0.set_ylabel("Flux")
+
+        ax1 = fig.add_subplot(axs[1,i])
+        ax1.errorbar(wave, 100 * (flux - y) / flux, yerr=100 * fluxerr, \
+                                                                fmt="-",
+                     ecolor="0.8", c="tab:blue")
+        ax1.plot(wave, 100 * (flux - y) / flux, c="tab:orange")
+        ax1.set_ylabel("Res. (\%)")
+        ax1.set_xlabel("$\lambda$ (Angstrom)")
+        ax1.set_ylim(-5, 5)
+        ax1.axhline(y=0, ls="--", c="k")
+        # Include sky lines shades
+        if skylines is not None:
+            for ax in [ax0, ax1]:
+                w0, w1 = ax0.get_xlim()
+                for skyline in skylines:
+                    if (skyline < w0) or (skyline > w1):
+                        continue
+                    ax.axvspan(skyline - 3, skyline + 3, color="0.9",
+                               zorder=-100)
+    plt.tight_layout()
+    plt.savefig(output, dpi=300)
+    plt.show()
+    plt.clf()
+    plt.close(fig)
+    return
+
+def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
                  target_res=None):
     """ Run paintbox. """
     global logp, priors
@@ -168,6 +215,7 @@ def run_testdata(galaxy, dlam=100, nsteps=5000, loglike="studt2", nssps=1,
     spec = os.path.join(wdir, f"{galaxy}_spec.fits")
     logps = []
     wranges = [[4000, 6680], [7800, 8900]]
+    waves, fluxes, fluxerrs, masks, seds = [], [], [], [], []
     for i, side in enumerate(["blue", "red"]):
         tab = Table.read(spec, hdu=i+1)
         #  Normalizing the data to make priors simple
@@ -197,6 +245,11 @@ def run_testdata(galaxy, dlam=100, nsteps=5000, loglike="studt2", nssps=1,
                                   sigma=target_res[i], porder=porder)
         logp = pb.Normal2LogLike(flux, sed, obserr=fluxerr, mask=mask)
         logps.append(logp)
+        waves.append(wave)
+        fluxes.append(flux)
+        fluxerrs.append(fluxerr)
+        masks.append(mask)
+        seds.append(sed)
     # Make a joint likelihood for all sections
     logp = logps[0]
     for i in range(nssps - 1):
@@ -221,17 +274,18 @@ def run_testdata(galaxy, dlam=100, nsteps=5000, loglike="studt2", nssps=1,
     tracedata = reader.get_chain(discard=int(nsteps * 0.9), flat=True, thin=50)
     trace = Table(tracedata, names=logp.parnames)
     if nssps > 1:
-        wtrace = weighted_traces(trace, nssps)
+        ssp_pars = list(limits.keys())
+        wtrace = weighted_traces(ssp_pars, trace, nssps)
         trace = hstack([trace, wtrace])
     outtab = os.path.join(outdb.replace(".h5", "_results.fits"))
     make_table(trace, outtab)
     # # Plot fit
-    # outimg = outdb.replace(".h5", "_fit.png")
-    # plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, outimg,
-    #              skylines=skylines)
+    outimg = outdb.replace(".h5", "_fit.png")
+    plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, outimg,
+                 skylines=skylines)
 
 
 if __name__ == "__main__":
     galaxies = ["NGC7144"]
     for galaxy in galaxies:
-        run_testdata(galaxy, nssps=2)
+        run_paintbox(galaxy, nssps=2)
