@@ -19,7 +19,7 @@ else:
 
 # Matplotlib settings
 plt.style.context("seaborn-paper")
-plt.rcParams["text.usetex"] = True
+plt.rcParams["text.usetex"] = False
 plt.rcParams["font.family"] = "serif"
 plt.rcParams['font.serif'] = 'Computer Modern'
 plt.rcParams["xtick.direction"] = "in"

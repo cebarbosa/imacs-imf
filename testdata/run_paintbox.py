@@ -156,14 +156,15 @@ def plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, output,
         sed = seds[i]
         t = np.array([trace[p].data for p in sed.parnames]).T
         n = len(t)
-        wave = waves[i][masks[i]]
-        flux = fluxes[i][masks[i]]
-        fluxerr = fluxerrs[i][masks[i]]
+        pmask = np.where(masks[i]==0, True, False)
+        wave = waves[i][pmask]
+        flux = fluxes[i][pmask]
+        fluxerr = fluxerrs[i][pmask]
         models = np.zeros((n, len(wave)))
         y = np.percentile(models, 50, axis=(0,))
         for j in tqdm(range(len(trace)), desc="Generating models "
                                                          "for trace"):
-            models[j] = seds[i](t[j])[masks[i]]
+            models[j] = seds[i](t[j])[pmask]
         y = np.percentile(models, 50, axis=(0,))
         yuerr = np.percentile(models, 84, axis=(0,)) - y
         ylerr = y - np.percentile(models, 16, axis=(0,))
@@ -179,7 +180,7 @@ def plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, output,
                                                                 fmt="-",
                      ecolor="0.8", c="tab:blue")
         ax1.plot(wave, 100 * (flux - y) / flux, c="tab:orange")
-        ax1.set_ylabel("Res. (\%)")
+        ax1.set_ylabel("Res. (%)")
         ax1.set_xlabel("$\lambda$ (Angstrom)")
         ax1.set_ylim(-5, 5)
         ax1.axhline(y=0, ls="--", c="k")
@@ -269,7 +270,7 @@ def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
     if context.node in context.lai_machines: #not allowing post-processing @LAI
         return
     reader = emcee.backends.HDFBackend(outdb)
-    tracedata = reader.get_chain(discard=int(nsteps * 0.9), flat=True, thin=50)
+    tracedata = reader.get_chain(discard=int(nsteps * 0.9), flat=True, thin=100)
     trace = Table(tracedata, names=logp.parnames)
     if nssps > 1:
         ssp_pars = list(limits.keys())
