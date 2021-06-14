@@ -20,14 +20,15 @@ def make_paintbox_model(wave, name="test", porder=45, nssps=1,
     # Directory where you store your CvD models
     base_dir = context.cvd_dir
     # Locationg where pre-processed models will be stored for paintbox
-    outdir = os.path.join(context.home_dir,
-                          f"templates/CvD18_sig{sigma}_{name}")
+    store = os.path.join(context.home_dir,
+                          f"templates/CvD18_sig{sigma}_{name}.fits")
     # Defining wavelength for templates
     velscale = sigma / 2
     wmin = wave.min() - 200
     wmax = wave.max() + 50
     twave = disp2vel([wmin, wmax], velscale)
-    ssp = CvD18(twave, sigma=sigma, store=outdir)
+
+    ssp = CvD18(twave, sigma=sigma, store=store, libpath=context.cvd_dir)
     limits = ssp.limits
     if nssps > 1:
         for i in range(nssps):
@@ -223,22 +224,19 @@ def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
         wave = tab["wave"].data
         flux = tab["flux"].data / norm
         fluxerr = tab["fluxerr"].data / norm
-        # Setting mask
-        # Masks in paintbox are booleans such that True==used in fitting,
-        # False==not used
-        mask = np.invert(tab["mask"].data.astype(np.bool))
+        mask = tab["mask"]
         idx = np.where((wave < wranges[i][0]) | (wave > wranges[i][1]))[0]
         mask[idx] = False
         # Masking all remaining locations where flux is NaN
-        mask[np.isnan(flux * fluxerr)] = False
+        mask[np.isnan(flux * fluxerr)] = 1
         # Masking lines from Osterbrock atlas
         for line in skylines:
             idx = np.argwhere((wave >= line - dsky) &
                               (wave <= line + dsky)).ravel()
-            mask[idx] = False
+            mask[idx] = 1.
         # Defining polynomial order
-        wmin = wave[mask].min()
-        wmax = wave[mask].max()
+        wmin = wave[mask==0].min()
+        wmax = wave[mask==0].max()
         porder = int((wmax - wmin) / dlam)
         # Building paintbox model
         sed, limits = make_paintbox_model(wave, nssps=nssps, name=side,
