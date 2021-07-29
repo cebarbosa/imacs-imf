@@ -48,7 +48,8 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
         fbroad, fbroaderr = broad2res(w, f, fwhm, target_fwhm, fluxerr=ferr)
         # Resampling data
         owave = disp2vel([w[0], w[-1]], velscale[i])
-        oflux, ofluxerr = spectres(owave, w, fbroad, spec_errs=fbroaderr)
+        oflux = spectres(owave, w, fbroad)
+        ofluxerr = spectres(owave, w, fbroaderr)
         omask = spectres(owave, w, m).astype(np.int).astype(np.bool)
         obsmask = -1 * (omask.astype(np.int) - 1)
         table = Table([owave, oflux, ofluxerr, obsmask], names=names)
@@ -58,8 +59,15 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
     hdulist.writeto(outfile, overwrite=True)
     return
 
+def prepare_sample(sample, overwrite=False):
+    for galaxy in sample:
+        wdir = os.path.join(context.home_dir, "data", galaxy)
+        spec_file = os.path.join(wdir, f"{galaxy}_1_1arc_bg_noconv.txt")
+        if not os.path.exists(spec_file):
+            continue
+        outfile = os.path.join(wdir, f"{galaxy}_spec.fits")
+        prepare_spectrum(spec_file, outfile, overwrite=True)
+
 if __name__ == "__main__":
-    wdir = os.path.join(context.home_dir, "data/testdata")
-    spec_file = os.path.join(wdir, "NGC7144_1_1arc_bg_noconv.txt")
-    outfile = os.path.join(wdir, "NGC7144_spec.fits")
-    prepare_spectrum(spec_file, outfile, overwrite=True)
+    galaxies = ["NGC4033"]
+    prepare_sample(galaxies)
