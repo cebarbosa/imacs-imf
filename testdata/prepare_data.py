@@ -20,19 +20,11 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
         return
     wave, flux, fluxerr, mask, res_kms = np.loadtxt(spec_file, unpack=True)
     mask = mask.astype(np.bool).astype(np.int)
-    # oversample = np.ceil(10000 / len(wave)).astype(int)
-    # if oversample > 1:
-    #     w = np.linspace(wave[0], wave[-1], len(wave) * oversample)
-    # Interpolating flux / fluxerr
     idx = np.where(mask > 0)[0]
     f_interp = interp1d(wave[idx], flux[idx], fill_value="extrapolate")
     flux = f_interp(wave)
     ferr_interp = interp1d(wave[idx], fluxerr[idx], fill_value="extrapolate")
     fluxerr = ferr_interp(wave)
-    res_interp = interp1d(wave[idx], res_kms[idx], fill_value="extrapolate")
-    res_kms = res_interp(wave)
-    mask_interp = interp1d(wave[idx], mask[idx], fill_value="nearest")
-    mask = res_interp(wave)
     # Calculating resolution in FWHM
     c = const.c.to("km/s").value
     fwhms = res_kms / c * wave * 2.355
@@ -60,7 +52,8 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
         ofluxerr = gaussian_filter1d(ofluxerr, 3)
         omask = spectres(owave, w, m).astype(np.int).astype(np.bool)
         obsmask = -1 * (omask.astype(np.int) - 1)
-        table = Table([owave, oflux, ofluxerr, obsmask], names=names)
+        table = Table([owave, oflux, ofluxerr, obsmask],
+                      names=names)
         hdu = fits.BinTableHDU(table)
         hdulist.append(hdu)
     hdulist = fits.HDUList(hdulist)
@@ -77,5 +70,5 @@ def prepare_sample(sample, overwrite=False):
             prepare_spectrum(spec_file, outfile, overwrite=True)
 
 if __name__ == "__main__":
-    galaxies = ["NGC4033"]
-    prepare_sample(galaxies)
+    galaxies = ["NGC4033", "NGC7144"]
+    prepare_sample(galaxies, overwrite=True)
