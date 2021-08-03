@@ -4,10 +4,10 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+from scipy.ndimage import gaussian_filter1d
 from astropy.io import fits
 from astropy.table import Table
 import astropy.constants as const
-from ppxf import ppxf_util
 from spectres import spectres
 
 from paintbox.utils import broad2res, disp2vel
@@ -20,12 +20,19 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
         return
     wave, flux, fluxerr, mask, res_kms = np.loadtxt(spec_file, unpack=True)
     mask = mask.astype(np.bool).astype(np.int)
+    # oversample = np.ceil(10000 / len(wave)).astype(int)
+    # if oversample > 1:
+    #     w = np.linspace(wave[0], wave[-1], len(wave) * oversample)
     # Interpolating flux / fluxerr
     idx = np.where(mask > 0)[0]
     f_interp = interp1d(wave[idx], flux[idx], fill_value="extrapolate")
     flux = f_interp(wave)
     ferr_interp = interp1d(wave[idx], fluxerr[idx], fill_value="extrapolate")
     fluxerr = ferr_interp(wave)
+    res_interp = interp1d(wave[idx], res_kms[idx], fill_value="extrapolate")
+    res_kms = res_interp(wave)
+    mask_interp = interp1d(wave[idx], mask[idx], fill_value="nearest")
+    mask = res_interp(wave)
     # Calculating resolution in FWHM
     c = const.c.to("km/s").value
     fwhms = res_kms / c * wave * 2.355
@@ -48,8 +55,9 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
         fbroad, fbroaderr = broad2res(w, f, fwhm, target_fwhm, fluxerr=ferr)
         # Resampling data
         owave = disp2vel([w[0], w[-1]], velscale[i])
-        oflux = spectres(owave, w, fbroad)
-        ofluxerr = spectres(owave, w, fbroaderr)
+        oflux, ofluxerr = spectres(owave, w, fbroad, spec_errs=fbroaderr)
+        # Filtering the high variance of the output error for the error.
+        ofluxerr = gaussian_filter1d(ofluxerr, 3)
         omask = spectres(owave, w, m).astype(np.int).astype(np.bool)
         obsmask = -1 * (omask.astype(np.int) - 1)
         table = Table([owave, oflux, ofluxerr, obsmask], names=names)
@@ -60,13 +68,13 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
     return
 
 def prepare_sample(sample, overwrite=False):
-    for galaxy in sample:
+    for galaxy in galaxies:
         wdir = os.path.join(context.home_dir, "data", galaxy)
-        spec_file = os.path.join(wdir, f"{galaxy}_1_1arc_bg_noconv.txt")
-        if not os.path.exists(spec_file):
-            continue
-        outfile = os.path.join(wdir, f"{galaxy}_spec.fits")
-        prepare_spectrum(spec_file, outfile, overwrite=True)
+        os.chdir(wdir)
+        spec_files = [_ for _ in os.listdir(wdir) if _.endswith("noconv.txt")]
+        for spec_file in spec_files:
+            outfile = os.path.join(wdir, spec_file.replace(".txt", ".fits"))
+            prepare_spectrum(spec_file, outfile, overwrite=True)
 
 if __name__ == "__main__":
     galaxies = ["NGC4033"]
