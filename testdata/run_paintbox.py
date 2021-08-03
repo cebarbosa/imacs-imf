@@ -7,28 +7,20 @@ import numpy as np
 from scipy import stats
 import multiprocessing as mp
 from astropy.table import Table, hstack, vstack
+import astropy.constants as const
 import emcee
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from ppxf import ppxf_util
 import paintbox as pb
 from paintbox.utils import CvD18, disp2vel
 
 import context
 
-def make_paintbox_model(wave, name="test", porder=45, nssps=1,
-                        sigma=100):
-    # Directory where you store your CvD models
-    base_dir = context.cvd_dir
-    # Locationg where pre-processed models will be stored for paintbox
-    store = os.path.join(context.home_dir,
-                          f"templates/CvD18_sig{sigma}_{name}.fits")
-    # Defining wavelength for templates
-    velscale = sigma / 2
-    wmin = wave.min() - 200
-    wmax = wave.max() + 50
-    twave = disp2vel([wmin, wmax], velscale)
-
-    ssp = CvD18(twave, sigma=sigma, store=store, libpath=context.cvd_dir)
+def make_paintbox_model(wave, store, name="test", porder=45, nssps=1, sigma=100):
+    """ Prepare a model with paintbox. """
+    ssp = CvD18(sigma=sigma, store=store, libpath=context.cvd_dir)
+    twave = ssp.wave
     limits = ssp.limits
     if nssps > 1:
         for i in range(nssps):
@@ -46,10 +38,27 @@ def make_paintbox_model(wave, name="test", porder=45, nssps=1,
     stars = pb.Resample(wave, pb.LOSVDConv(pop, losvdpars=[vname, "sigma"]))
     # Adding a polynomial
     poly = pb.Polynomial(wave, porder, zeroth=True, pname=f"p{name}")
-    sed = stars * poly
-    return sed, limits
+    # Including emission lines
+    target_fwhm = lambda w: sigma / const.c.to("km/s").value * w * 2.355
+    gas_templates, gas_names, line_wave = ppxf_util.emission_lines(
+        np.log(twave), [wave[0], wave[-1]], target_fwhm,
+        tie_balmer=True)
+    gas_templates /= np.max(gas_templates, axis=0) # Normalize line amplitudes
+    gas_names = [_.replace("_", "") for _ in gas_names]
+    # for em in gas_templates.T:
+    #     plt.plot(twave, em)
+    # plt.show()
+    if len(gas_names) > 0:
+        emission = pb.NonParametricModel(twave, gas_templates.T,
+                                         names=gas_names)
+        emkin = pb.Resample(wave, pb.LOSVDConv(emission,
+                            losvdpars=[vname, "sigma_gas"]))
+        sed = (stars + emkin) * poly
+    else:
+        sed = stars * poly
+    return sed, limits, gas_names
 
-def set_priors(parnames, limits, vsyst, nssps=1):
+def set_priors(parnames, limits, linenames, vsyst, nssps=1):
     """ Defining prior distributions for the model. """
     priors = {}
     for parname in parnames:
@@ -66,8 +75,12 @@ def set_priors(parnames, limits, vsyst, nssps=1):
             priors["nu"] = stats.uniform(loc=2, scale=20)
         elif parname == "sigma":
             priors["sigma"] = stats.uniform(loc=50, scale=300)
+        elif parname == "sigma_gas":
+            priors[parname] = stats.uniform(loc=50, scale=100)
         elif name == "w":
             priors[parname] = stats.uniform(loc=0, scale=1)
+        elif name in linenames:
+            priors[parname] = stats.expon(loc=0, scale=0.5)
         elif name in ["pred", "pblue"]:
             porder = int(parname.split("_")[1])
             if porder == 0:
@@ -200,7 +213,8 @@ def plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, output,
     plt.close(fig)
     return
 
-def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
+def run_paintbox(galaxy, spec, V0s, dlam=100, nsteps=5000, loglike="normal2",
+                 nssps=1,
                  target_res=None):
     """ Run paintbox. """
     global logp, priors
@@ -212,13 +226,22 @@ def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
                          8747, 8757, 8767, 8777, 8787, 8797, 8827, 8836,
                          8919, 9310])
     dsky = 3 # Space around sky lines
-    wdir = os.path.join(context.home_dir, f"data/{galaxy}")
-    # Providing template file
-    spec = os.path.join(wdir, f"{galaxy}_spec.fits")
     logps = []
     wranges = [[4000, 6680], [7800, 8900]]
-    waves, fluxes, fluxerrs, masks, seds = [], [], [], [], []
+    waves, fluxes, fluxerrs, masks, seds, linenames = [], [], [], [], [], []
     for i, side in enumerate(["blue", "red"]):
+        # Locationg where pre-processed models will be stored for paintbox
+        sigma = target_res[i]
+        store = os.path.join(context.home_dir, "templates",
+                             f"CvD18_sig{sigma}_{side}.fits")
+        if not os.path.exists(store):
+            # Compiling the CvD models
+            velscale = sigma / 2
+            wmin = wave.min() - 180
+            wmax = wave.max() + 50
+            twave = disp2vel([wmin, wmax], velscale)
+            CvD18(twave, sigma=sigma, store=store, libpath=context.cvd_dir)
+        # Reading the data
         tab = Table.read(spec, hdu=i+1)
         #  Normalizing the data to make priors simple
         norm = np.nanmedian(tab["flux"])
@@ -240,8 +263,9 @@ def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
         wmax = wave[mask==0].max()
         porder = int((wmax - wmin) / dlam)
         # Building paintbox model
-        sed, limits = make_paintbox_model(wave, nssps=nssps, name=side,
-                                  sigma=target_res[i], porder=porder)
+        sed, limits, lines = make_paintbox_model(wave, store,
+                              nssps=nssps, name=side, sigma=sigma,
+                              porder=porder)
         logp = pb.Normal2LogLike(flux, sed, obserr=fluxerr, mask=mask)
         logps.append(logp)
         waves.append(wave)
@@ -249,15 +273,19 @@ def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
         fluxerrs.append(fluxerr)
         masks.append(mask)
         seds.append(sed)
+        linenames += lines
     # Make a joint likelihood for all sections
     logp = logps[0]
     for i in range(nssps - 1):
         logp += logps[i+1]
     # Making priors
-    v0 = {"vsyst_blue": 1390, "vsyst_red": 1860}
-    priors = set_priors(logp.parnames, limits, vsyst=v0, nssps=nssps)
+    v0 = {"vsyst_blue": V0s[0], "vsyst_red": V0s[1]}
+    priors = set_priors(logp.parnames, limits, linenames, vsyst=v0, nssps=nssps)
     # Perform fitting
-    dbname = f"{galaxy}_nssps{nssps}_{loglike}_nsteps{nsteps}.h5"
+    pb_dir = f"paintbox_nssps{nssps}_{loglike}_nsteps{nsteps}.h5"
+    if not os.path.exists(pb_dir):
+        os.mkdir(pb_dir)
+    dbname = os.path.join(pb_dir, spec.replace(".fits", ".h5"))
     # Run in any directory outside Dropbox to avoid problems
     tmp_db = os.path.join(os.getcwd(), dbname)
     if os.path.exists(tmp_db):
@@ -285,6 +313,13 @@ def run_paintbox(galaxy, dlam=100, nsteps=5000, loglike="normal2", nssps=1,
 
 
 if __name__ == "__main__":
-    galaxies = ["NGC7144"]
+    galaxies = ["NGC4033", "NGC7144"]
+    V0s = {"NGC7144": (1390, 1860), "NGC4033": (1617, 1617)}
     for galaxy in galaxies:
-        run_paintbox(galaxy, nssps=2)
+        wdir = os.path.join(context.home_dir, f"data/{galaxy}")
+        os.chdir(wdir)
+        specs = sorted([_ for _ in os.listdir(".") if _.endswith(
+                        "bg_noconv.fits")])
+        V0 = V0s[galaxy]
+        for spec in specs:
+            run_paintbox(galaxy, spec, V0, nssps=2)
