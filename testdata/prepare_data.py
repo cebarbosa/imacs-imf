@@ -51,6 +51,13 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
         # Filtering the high variance of the output error for the error.
         ofluxerr = gaussian_filter1d(ofluxerr, 3)
         omask = spectres(owave, w, m).astype(np.int).astype(np.bool)
+        ########################################################################
+        # Include mask for borders of spectrum
+        wmin = owave[omask].min()
+        wmax = owave[omask].max()
+        omask[owave < wmin + 5] = False
+        omask[owave > wmax - 5] = False
+        ########################################################################
         obsmask = -1 * (omask.astype(np.int) - 1)
         table = Table([owave, oflux, ofluxerr, obsmask],
                       names=names)
