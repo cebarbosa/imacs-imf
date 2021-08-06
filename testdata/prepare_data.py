@@ -68,13 +68,13 @@ def prepare_spectrum(spec_file, outfile, overwrite=False):
     return
 
 def prepare_sample(sample, overwrite=False):
-    for galaxy in galaxies:
+    for galaxy in sample:
         wdir = os.path.join(context.home_dir, "data", galaxy)
         os.chdir(wdir)
         spec_files = [_ for _ in os.listdir(wdir) if _.endswith("noconv.txt")]
         for spec_file in spec_files:
             outfile = os.path.join(wdir, spec_file.replace(".txt", ".fits"))
-            prepare_spectrum(spec_file, outfile, overwrite=True)
+            prepare_spectrum(spec_file, outfile, overwrite=overwrite)
 
 if __name__ == "__main__":
     galaxies = ["NGC4033", "NGC7144"]
