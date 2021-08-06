@@ -12,6 +12,7 @@ import emcee
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from ppxf import ppxf_util
+import seaborn as sns
 import paintbox as pb
 from paintbox.utils import CvD18, disp2vel
 
@@ -213,9 +214,77 @@ def plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, output,
     plt.close(fig)
     return
 
+def plot_corner(trace, outroot, title=None, redo=False):
+    labels = {"imf": r"$\Gamma_b$", "Z": "[Z/H]", "T": "Age (Gyr)",
+              "alphaFe": r"[$\alpha$/Fe]", "NaFe": "[Na/Fe]",
+              "Age": "Age (Gyr)", "x1": "$x_1$", "x2": "$x_2$", "Ca": "[Ca/H]",
+              "Fe": "[Fe/H]", "Na": "[Na/H]",
+              "K": "[K/H]", "C": "[C/H]", "N": "[N/H]",
+              "Mg": "[Mg/H]", "Si": "[Si/H]", "Ca": "[Ca/H]", "Ti": "[Ti/H]"}
+    title = "" if title is None else title
+    output = "{}_corner.png".format(outroot)
+    if os.path.exists(output) and not redo:
+        return
+    N = len(trace.colnames)
+    params = trace.colnames
+    data = np.stack([trace[p] for p in params]).T
+    v = np.percentile(data, 50, axis=0)
+    vmax = np.percentile(data, 84, axis=0)
+    vmin = np.percentile(data, 16, axis=0)
+    vuerr = vmax - v
+    vlerr = v - vmin
+    title = [title]
+    for i, param in enumerate(params):
+        parname = param.replace("_weighted", "")
+        s = "{0}$={1:.2f}^{{+{2:.2f}}}_{{-{3:.2f}}}$".format(
+            labels[parname], v[i], vuerr[i], vlerr[i])
+        title.append(s)
+    fig, axs = plt.subplots(N, N, figsize=(3.54, 3.5))
+    grid = np.array(np.meshgrid(params, params)).reshape(2, -1).T
+    for i, (p1, p2) in enumerate(grid):
+        p1name = p1.replace("_weighted", "")
+        p2name = p2.replace("_weighted", "")
+        i1 = params.index(p1)
+        i2 = params.index(p2)
+        ax = axs[i // N, i % N]
+        ax.tick_params(axis="both", which='major',
+                       labelsize=4)
+        if i // N < i % N:
+            ax.set_visible(False)
+            continue
+        x = data[:,i1]
+        if p1 == p2:
+            sns.kdeplot(x, shade=True, ax=ax, color="C0")
+        else:
+            y = data[:, i2]
+            sns.kdeplot(x, y, shade=True, ax=ax, cmap="Blues")
+            ax.axhline(np.median(y), ls="-", c="k", lw=0.5)
+            ax.axhline(np.percentile(y, 16), ls="--", c="k", lw=0.5)
+            ax.axhline(np.percentile(y, 84), ls="--", c="k", lw=0.5)
+        if i > N * (N - 1) - 1:
+            ax.set_xlabel(labels[p1name], size=7)
+        else:
+            ax.xaxis.set_ticklabels([])
+        if i in np.arange(0, N * N, N)[1:]:
+            ax.set_ylabel(labels[p2name], size=7)
+        else:
+            ax.yaxis.set_ticklabels([])
+        ax.axvline(np.median(x), ls="-", c="k", lw=0.5)
+        ax.axvline(np.percentile(x, 16), ls="--", c="k", lw=0.5)
+        ax.axvline(np.percentile(x, 84), ls="--", c="k", lw=0.5)
+    plt.text(0.6, 0.7, "\n".join(title), transform=plt.gcf().transFigure,
+             size=8)
+    plt.subplots_adjust(left=0.12, right=0.995, top=0.98, bottom=0.08,
+                        hspace=0.04, wspace=0.04)
+    fig.align_ylabels()
+    for fmt in ["png", "pdf"]:
+        output = "{}_corner.{}".format(outroot, fmt)
+        plt.savefig(output, dpi=300)
+    plt.close(fig)
+    return
+
 def run_paintbox(galaxy, spec, V0s, dlam=100, nsteps=5000, loglike="normal2",
-                 nssps=1,
-                 target_res=None):
+                 nssps=1, target_res=None):
     """ Run paintbox. """
     global logp, priors
     target_res = [200, 100] if target_res is None else target_res
@@ -306,11 +375,16 @@ def run_paintbox(galaxy, spec, V0s, dlam=100, nsteps=5000, loglike="normal2",
         trace = hstack([trace, wtrace])
     outtab = os.path.join(outdb.replace(".h5", "_results.fits"))
     make_table(trace, outtab)
-    # # Plot fit
+    # Plot fit
     outimg = outdb.replace(".h5", "_fit.png")
     plot_fitting(waves, fluxes, fluxerrs, masks, seds, trace, outimg,
                  skylines=skylines)
-
+    # Make corner plot
+    # Choose columns for plot
+    cols_for_corner = [_ for _ in trace.colnames if _.endswith("weighted")]
+    corner_table = trace[cols_for_corner]
+    corner_file = outdb.replace(".h5", "_corner") # It will be saved in png/pdf
+    plot_corner(corner_table, corner_file, title=galaxy, redo=False)
 
 if __name__ == "__main__":
     galaxies = ["NGC4033", "NGC7144"]
