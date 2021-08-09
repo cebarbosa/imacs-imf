@@ -43,7 +43,7 @@ def make_paintbox_model(wave, store, name="test", porder=45, nssps=1, sigma=100)
     target_fwhm = lambda w: sigma / const.c.to("km/s").value * w * 2.355
     gas_templates, gas_names, line_wave = ppxf_util.emission_lines(
         np.log(twave), [wave[0], wave[-1]], target_fwhm,
-        tie_balmer=True)
+        tie_balmer=True, vacuum=True)
     gas_templates /= np.max(gas_templates, axis=0) # Normalize line amplitudes
     gas_names = [_.replace("_", "") for _ in gas_names]
     # for em in gas_templates.T:
@@ -319,7 +319,7 @@ def run_paintbox(galaxy, spec, V0s, dlam=100, nsteps=5000, loglike="normal2",
         fluxerr = tab["fluxerr"].data / norm
         mask = tab["mask"]
         idx = np.where((wave < wranges[i][0]) | (wave > wranges[i][1]))[0]
-        mask[idx] = False
+        mask[idx] = 1
         # Masking all remaining locations where flux is NaN
         mask[np.isnan(flux * fluxerr)] = 1
         # Masking lines from Osterbrock atlas
