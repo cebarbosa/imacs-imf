@@ -302,13 +302,6 @@ def run_paintbox(galaxy, spec, V0s, dlam=100, nsteps=5000, loglike="normal2",
         sigma = target_res[i]
         store = os.path.join(context.home_dir, "templates",
                              f"CvD18_sig{sigma}_{side}.fits")
-        if not os.path.exists(store):
-            # Compiling the CvD models
-            velscale = sigma / 2
-            wmin = wave.min() - 180
-            wmax = wave.max() + 50
-            twave = pb.disp2vel([wmin, wmax], velscale)
-            pb.CvD18(twave, sigma=sigma, store=store, libpath=context.cvd_dir)
         # Reading the data
         tab = Table.read(spec, hdu=i+1)
         #  Normalizing the data to make priors simple
@@ -326,6 +319,13 @@ def run_paintbox(galaxy, spec, V0s, dlam=100, nsteps=5000, loglike="normal2",
             idx = np.argwhere((wave >= line - dsky) &
                               (wave <= line + dsky)).ravel()
             mask[idx] = 1.
+        if not os.path.exists(store):
+            # Compiling the CvD models
+            velscale = sigma / 2
+            wmin = wave.min() - 180
+            wmax = wave.max() + 50
+            twave = pb.disp2vel([wmin, wmax], velscale)
+            pb.CvD18(twave, sigma=sigma, store=store, libpath=context.cvd_dir)
         # Defining polynomial order
         wmin = wave[mask==0].min()
         wmax = wave[mask==0].max()
